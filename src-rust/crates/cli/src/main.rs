@@ -696,7 +696,7 @@ async fn run_headless(
     tool_ctx: ToolContext,
     query_config: cc_query::QueryConfig,
     cost_tracker: Arc<CostTracker>,
-    feature_flags: FeatureFlagManager,
+    _feature_flags: FeatureFlagManager,
 ) -> anyhow::Result<()> {
     use cc_query::{QueryEvent, QueryOutcome};
     use tokio::sync::mpsc;
@@ -951,7 +951,7 @@ async fn run_interactive(
     cost_tracker: Arc<CostTracker>,
     resume_id: Option<String>,
     bridge_config: Option<cc_bridge::BridgeConfig>,
-    feature_flags: FeatureFlagManager,
+    _feature_flags: FeatureFlagManager,
 ) -> anyhow::Result<()> {
     use cc_commands::{execute_command, CommandContext, CommandResult};
     use cc_bridge::{BridgeOutbound, TuiBridgeEvent};
@@ -1605,6 +1605,10 @@ async fn run_interactive(
                         session.messages = messages.clone();
                         session.updated_at = chrono::Utc::now();
                     }
+                }
+                Event::Mouse(mouse_event) => {
+                    // Forward mouse events to the app (trackpad scroll, text selection, etc.)
+                    app.handle_mouse_event(mouse_event);
                 }
                 Event::Resize(_, _) => {
                     // Terminal resize - will be handled on next draw

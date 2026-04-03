@@ -157,14 +157,25 @@ async fn run_in_background(command: String, cwd: PathBuf, timeout_ms: u64) -> To
         let result = tokio::time::timeout(
             Duration::from_millis(timeout_ms),
             async {
-                let child = Command::new("bash")
-                    .arg("-c")
-                    .arg(&command_clone)
-                    .current_dir(&cwd)
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .stdin(Stdio::null())
-                    .spawn();
+                let child = if cfg!(windows) {
+                    Command::new("cmd")
+                        .arg("/C")
+                        .arg(&command_clone)
+                        .current_dir(&cwd)
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .stdin(Stdio::null())
+                        .spawn()
+                } else {
+                    Command::new("bash")
+                        .arg("-c")
+                        .arg(&command_clone)
+                        .current_dir(&cwd)
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .stdin(Stdio::null())
+                        .spawn()
+                };
 
                 match child {
                     Ok(mut c) => {

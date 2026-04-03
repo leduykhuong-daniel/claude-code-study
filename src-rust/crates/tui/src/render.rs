@@ -563,13 +563,13 @@ pub fn render_app(frame: &mut Frame, app: &App) {
         || app.help_overlay.visible
         || app.global_search.open;
     if !modal_active {
-        apply_selection_highlight(frame, app, size);
+        apply_selection_highlight(frame, app);
     }
 }
 
 /// Post-render pass: invert colours on selected cells and extract the
 /// selection text into `app.selection_text`.
-fn apply_selection_highlight(frame: &mut Frame, app: &App, size: Rect) {
+fn apply_selection_highlight(frame: &mut Frame, app: &App) {
     let (anchor, focus) = match (app.selection_anchor, app.selection_focus) {
         (Some(a), Some(f)) => (a, f),
         _ => return,
@@ -577,6 +577,21 @@ fn apply_selection_highlight(frame: &mut Frame, app: &App, size: Rect) {
     if anchor == focus {
         return;
     }
+
+    // Restrict selection to message pane area only
+    let msg_area = app.last_msg_area.get();
+    let msg_max_row = msg_area.y.saturating_add(msg_area.height).saturating_sub(1);
+    let msg_max_col = msg_area.x.saturating_add(msg_area.width).saturating_sub(1);
+
+    // Clamp anchor and focus to message pane bounds
+    let anchor = (
+        anchor.0.clamp(msg_area.x, msg_max_col),
+        anchor.1.clamp(msg_area.y, msg_max_row),
+    );
+    let focus = (
+        focus.0.clamp(msg_area.x, msg_max_col),
+        focus.1.clamp(msg_area.y, msg_max_row),
+    );
 
     // Normalise so start ≤ end (row-major order).
     let (start, end) = if (anchor.1, anchor.0) <= (focus.1, focus.0) {
@@ -587,11 +602,10 @@ fn apply_selection_highlight(frame: &mut Frame, app: &App, size: Rect) {
 
     let buf = frame.buffer_mut();
     let mut text = String::new();
-    let last_row = end.1.min(size.y + size.height - 1);
+    let last_row = end.1.min(msg_max_row);
     for row in start.1..=last_row {
-        let col_from = if row == start.1 { start.0 } else { 0 };
-        let col_to = if row == end.1 { end.0 } else { size.x + size.width - 1 };
-        let col_to = col_to.min(size.x + size.width - 1);
+        let col_from = if row == start.1 { start.0 } else { msg_area.x };
+        let col_to = if row == end.1 { end.0 } else { msg_max_col };
         for col in col_from..=col_to {
             if let Some(cell) = buf.cell_mut((col, row)) {
                 let sym = cell.symbol().to_owned();

@@ -43,7 +43,7 @@ pub fn next_status(status: &TaskStatus) -> TaskStatus {
     match status {
         TaskStatus::Pending => TaskStatus::InProgress,
         TaskStatus::InProgress => TaskStatus::Completed,
-        TaskStatus::Completed | TaskStatus::Pending | TaskStatus::Running | TaskStatus::Failed | TaskStatus::Deleted => TaskStatus::Pending,
+        TaskStatus::Completed | TaskStatus::Running | TaskStatus::Failed | TaskStatus::Deleted => TaskStatus::Pending,
     }
 }
 
@@ -119,7 +119,6 @@ impl TasksOverlay {
 
         // Sort: pending first, then in_progress, then completed
         self.tasks.sort_by(|a, b| {
-            use std::cmp::Ordering;
             let priority = |status: &TaskStatus| -> u8 {
                 match status {
                     TaskStatus::Pending => 0,

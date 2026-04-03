@@ -32,7 +32,7 @@ use cc_core::keybindings::{
 use cc_core::types::{Message, Role};
 use cc_query::QueryEvent;
 use cc_tools;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use std::cell::{Cell, RefCell};
@@ -2872,6 +2872,69 @@ impl App {
         !first_word.is_empty() && self.bash_prefix_allowlist.contains(first_word)
     }
 
+    /// Process mouse events (trackpad scroll, text selection, etc.).
+    pub fn handle_mouse_event(&mut self, mouse_event: MouseEvent) {
+        use crossterm::event::MouseButton;
+        match mouse_event.kind {
+            MouseEventKind::ScrollUp => {
+                // Don't consume Ctrl+Scroll — let the terminal handle zoom.
+                if !mouse_event.modifiers.contains(KeyModifiers::CONTROL) {
+                    let step = self.scroll_step();
+                    self.scroll_offset = self.scroll_offset.saturating_add(step);
+                    self.auto_scroll = false;
+                    self.selection_anchor = None;
+                    self.selection_focus = None;
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if !mouse_event.modifiers.contains(KeyModifiers::CONTROL) {
+                    let step = self.scroll_step();
+                    let new_off = self.scroll_offset.saturating_sub(step);
+                    self.scroll_offset = new_off;
+                    if new_off == 0 {
+                        self.auto_scroll = true;
+                        self.new_messages_while_scrolled = 0;
+                    }
+                    self.selection_anchor = None;
+                    self.selection_focus = None;
+                }
+            }
+            // ---- Text selection ---------------------------------
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Only allow selection within the message pane area
+                let msg_area = self.last_msg_area.get();
+                if mouse_event.column >= msg_area.x
+                    && mouse_event.column < msg_area.x.saturating_add(msg_area.width)
+                    && mouse_event.row >= msg_area.y
+                    && mouse_event.row < msg_area.y.saturating_add(msg_area.height) {
+                    self.selection_anchor = Some((mouse_event.column, mouse_event.row));
+                    self.selection_focus = Some((mouse_event.column, mouse_event.row));
+                    *self.selection_text.borrow_mut() = String::new();
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                // Continue drag within message pane bounds
+                if self.selection_anchor.is_some() {
+                    let msg_area = self.last_msg_area.get();
+                    if mouse_event.column >= msg_area.x
+                        && mouse_event.column < msg_area.x.saturating_add(msg_area.width)
+                        && mouse_event.row >= msg_area.y
+                        && mouse_event.row < msg_area.y.saturating_add(msg_area.height) {
+                        self.selection_focus = Some((mouse_event.column, mouse_event.row));
+                    }
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                // Clear if no actual drag (single click = no selection)
+                if self.selection_anchor == self.selection_focus {
+                    self.selection_anchor = None;
+                    self.selection_focus = None;
+                }
+            }
+            _ => {}
+        }
+    }
+
     // -------------------------------------------------------------------
     // Query event handling
     // -------------------------------------------------------------------
@@ -3022,28 +3085,38 @@ impl App {
                 self.status_message = Some(err_msg);
             }
             QueryEvent::TokenWarning { state, pct_used } => {
-                // Display a status bar warning when approaching the context limit.
+                // Push a notification for context window warnings (notification + threshold tracking).
                 use cc_query::compact::TokenWarningState;
-                let msg = match state {
-                    TokenWarningState::Ok => None,
-                    TokenWarningState::Warning => Some(format!(
-                        "Context window {:.0}% full — consider /compact",
-                        pct_used * 100.0
-                    )),
-                    TokenWarningState::Critical => Some(format!(
-                        "Context window {:.0}% full — /compact recommended now",
-                        pct_used * 100.0
-                    )),
-                };
-                if let Some(warning) = msg {
-                    self.status_message = Some(warning);
+
+                // Only escalate — never repeat a threshold already shown.
+                match state {
+                    TokenWarningState::Ok => {
+                        // Reset threshold tracking when back to normal
+                        self.token_warning_threshold_shown = 0;
+                    }
+                    TokenWarningState::Warning if self.token_warning_threshold_shown < 80 => {
+                        self.token_warning_threshold_shown = 80;
+                        self.notifications.push(
+                            NotificationKind::Warning,
+                            format!("Context window {:.0}% full. Consider /compact.", pct_used * 100.0),
+                            Some(30),
+                        );
+                    }
+                    TokenWarningState::Critical if self.token_warning_threshold_shown < 95 => {
+                        self.token_warning_threshold_shown = 95;
+                        self.notifications.push(
+                            NotificationKind::Error,
+                            format!("Context window {:.0}% full! Run /compact now.", pct_used * 100.0),
+                            None,
+                        );
+                    }
+                    _ => {}
                 }
             }
         }
 
-        // Re-sync token count from tracker and check warning thresholds.
+        // Update token count from tracker.
         self.token_count = self.cost_tracker.total_tokens() as u32;
-        self.check_token_warnings();
     }
 
     // -------------------------------------------------------------------
@@ -3227,13 +3300,27 @@ impl App {
                             }
                             // ---- Text selection ---------------------------------
                             MouseEventKind::Down(MouseButton::Left) => {
-                                self.selection_anchor = Some((mouse_event.column, mouse_event.row));
-                                self.selection_focus = Some((mouse_event.column, mouse_event.row));
-                                *self.selection_text.borrow_mut() = String::new();
+                                // Only allow selection within the message pane area
+                                let msg_area = self.last_msg_area.get();
+                                if mouse_event.column >= msg_area.x
+                                    && mouse_event.column < msg_area.x.saturating_add(msg_area.width)
+                                    && mouse_event.row >= msg_area.y
+                                    && mouse_event.row < msg_area.y.saturating_add(msg_area.height) {
+                                    self.selection_anchor = Some((mouse_event.column, mouse_event.row));
+                                    self.selection_focus = Some((mouse_event.column, mouse_event.row));
+                                    *self.selection_text.borrow_mut() = String::new();
+                                }
                             }
                             MouseEventKind::Drag(MouseButton::Left) => {
+                                // Continue drag within message pane bounds
                                 if self.selection_anchor.is_some() {
-                                    self.selection_focus = Some((mouse_event.column, mouse_event.row));
+                                    let msg_area = self.last_msg_area.get();
+                                    if mouse_event.column >= msg_area.x
+                                        && mouse_event.column < msg_area.x.saturating_add(msg_area.width)
+                                        && mouse_event.row >= msg_area.y
+                                        && mouse_event.row < msg_area.y.saturating_add(msg_area.height) {
+                                        self.selection_focus = Some((mouse_event.column, mouse_event.row));
+                                    }
                                 }
                             }
                             MouseEventKind::Up(MouseButton::Left) => {

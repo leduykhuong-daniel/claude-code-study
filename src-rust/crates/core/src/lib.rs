@@ -903,7 +903,7 @@ pub mod constants {
     pub const ANTHROPIC_API_VERSION: &str = "2023-06-01";
     pub const ANTHROPIC_BETA_HEADER: &str =
         "interleaved-thinking-2025-05-14,token-efficient-tools-2025-02-19,files-api-2025-04-14,\
-         effort-2025-11-24,task-budgets-2026-03-13";
+         effort-2025-11-24";
 
     // File system
     pub const CLAUDE_MD_FILENAME: &str = "CLAUDE.md";
